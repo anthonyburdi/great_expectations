@@ -120,7 +120,7 @@ def substitute_config_variable(template_str, config_variables_dict):
 
     try:
         match = re.search(r"\$\{(.*?)\}", template_str) or re.search(
-            r"\$([_a-z][_a-z0-9]*)", template_str
+            r"\$([_a-zA-Z][_a-zA-Z0-9]*)", template_str
         )
     except TypeError:
         # If the value is not a string (e.g., a boolean), we should return it as is
@@ -130,7 +130,7 @@ def substitute_config_variable(template_str, config_variables_dict):
         config_variable_value = config_variables_dict.get(match.group(1))
         try:
             inner_match = re.search(r"\$\{(.*?)\}", config_variable_value) or re.search(
-                r"\$([_a-z][_a-z0-9]*)", config_variable_value
+                r"\$([_a-zA-Z][_a-zA-Z0-9]*)", config_variable_value
             )
         except TypeError:
             inner_match = None
