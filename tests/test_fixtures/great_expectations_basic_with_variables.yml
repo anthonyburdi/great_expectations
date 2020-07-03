@@ -16,8 +16,10 @@ datasources:
         reader_options:
           sep:
           engine: python
-          test_variable_sub1: ${replace_me}
-          test_variable_sub2: $replace_me
+          test_variable_sub1: ${replace_me1}
+          test_variable_sub2: $replace_me2
+          test_variable_sub3: ${REPLACE_ME3}
+          test_variable_sub4: $REPLACE_ME4
 
 
 config_variables_file_path: uncommitted/config_variables.yml

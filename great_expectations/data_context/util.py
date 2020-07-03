@@ -4,6 +4,7 @@ import logging
 import os
 import re
 from collections import OrderedDict
+from typing import List
 
 from great_expectations.data_context.types.base import (
     DataContextConfig,
@@ -99,11 +100,48 @@ def format_dict_for_error_message(dict_):
     return "\n\t".join("\t\t".join((str(key), str(dict_[key]))) for key in dict_)
 
 
+def find_substitution_candidates(template_str: str) -> List[dict]:
+    """
+    This method takes a string, looks for patterns like:
+    ${SOME_VARIABLE} or $SOME_VARIABLE or ${some_variable} or $some_variable
+    or ${sOmE_vAr1234iAblE} or $sOmE_vAr1234iAblE.
+    But not ${23rd_VARIABLE} or $23rd_VARIABLE.
+    There just has to be a leading $ and the first character cannot be 0-9.
+    The key to the substitution string must match the case.
+    It returns a dictionary describing where these patterns are within the string.
+    It is case insensitive and will return multiple patterns if found.
+
+    :param template_str: str that may contain substitution candidates
+    """
+    matches = re.finditer(r"\$\{(.*?)\}|\$([_a-zA-Z][_a-zA-Z0-9]*)", template_str)
+
+    substitution_candidates = []
+
+    for match in matches:
+
+        # Remove all $ and curly braces
+        dirty_match = match.group()
+        clean_match = dirty_match.replace("$", "")
+        clean_match = clean_match.replace("{", "")
+        clean_match = clean_match.replace("}", "")
+
+        substitution_candidates.append(
+            {
+                "match": dirty_match,
+                "clean_match": clean_match,
+                "start": match.start(),
+                "end": match.end(),
+            }
+        )
+
+    return substitution_candidates
+
+
 def substitute_config_variable(template_str, config_variables_dict):
     """
     This method takes a string, and if it contains a pattern ${SOME_VARIABLE} or $SOME_VARIABLE,
     returns a string where the pattern is replaced with the value of SOME_VARIABLE,
-    otherwise returns the string unchanged.
+    otherwise returns the string unchanged. SOME_VARIABLE is case insensitive.
 
     If the environment variable SOME_VARIABLE is set, the method uses its value for substitution.
     If it is not set, the value of SOME_VARIABLE is looked up in the config variables store (file).
@@ -118,42 +156,97 @@ def substitute_config_variable(template_str, config_variables_dict):
     if template_str is None:
         return template_str
 
-    try:
-        match = re.search(r"\$\{(.*?)\}", template_str) or re.search(
-            r"\$([_a-zA-Z][_a-zA-Z0-9]*)", template_str
-        )
-    except TypeError:
-        # If the value is not a string (e.g., a boolean), we should return it as is
-        return template_str
+    substitution_candidates = find_substitution_candidates(template_str)
 
-    if match:
-        config_variable_value = config_variables_dict.get(match.group(1))
-        try:
-            inner_match = re.search(r"\$\{(.*?)\}", config_variable_value) or re.search(
-                r"\$([_a-zA-Z][_a-zA-Z0-9]*)", config_variable_value
+    # Use a queue in case we add more substitution candidates from config_variables_dict
+    # Let's not worry much about performance as this should be a small amount of data
+    while len(substitution_candidates) > 0:
+
+        substitution_candidate = substitution_candidates.pop(0)
+
+        # Check if environment variable exists, if so substitute it
+        env_variable = os.getenv(substitution_candidate['clean_match'])
+        if env_variable:
+            template_str = (
+                template_str[:substitution_candidate['start']] +
+                env_variable +
+                template_str[substitution_candidate['end']:]
             )
-        except TypeError:
-            inner_match = None
 
-        if inner_match:
-            config_variable_value = os.getenv(inner_match.group(1))
+        # If not, check for match in config_variables_dict, if so substitute
+        elif substitution_candidate['clean_match'] in config_variables_dict:
+            template_str = (
+                template_str[:substitution_candidate['start']] +
+                config_variables_dict[substitution_candidate['clean_match']] +
+                template_str[substitution_candidate['end']:]
+            )
+            # re-calculate substitution candidates in case there are some in
+            # the newly inserted data from config_variables_dict
+            substitution_candidates = find_substitution_candidates(template_str)
 
-        if config_variable_value is not None:
-            if match.start() == 0 and match.end() == len(template_str):
-                return config_variable_value
-            else:
-                return (
-                    template_str[: match.start()]
-                    + config_variable_value
-                    + template_str[match.end() :]
-                )
+        # If value to substitue is not found in either place, raise error
+        else:
+            raise MissingConfigVariableError(
+                f"""\n\nUnable to find a match for config substitution variable: `{substitution_candidate['clean_match']}`.
+    Please add this missing variable to your `uncommitted/config_variables.yml` file or your environment variables.
+    See https://great-expectations.readthedocs.io/en/latest/reference/data_context_reference.html#managing-environment-and-secrets""",
+                missing_config_variable=substitution_candidate['clean_match'],
+            )
 
-        raise MissingConfigVariableError(
-            f"""\n\nUnable to find a match for config substitution variable: `{match.group(1)}`.
-Please add this missing variable to your `uncommitted/config_variables.yml` file or your environment variables.
-See https://great-expectations.readthedocs.io/en/latest/reference/data_context_reference.html#managing-environment-and-secrets""",
-            missing_config_variable=match.group(1),
-        )
+    # TODO: Determine if any of this is needed, esp the if statement in this part:
+    #         if config_variable_value is not None:
+#             if match.start() == 0 and match.end() == len(template_str):
+#                 return config_variable_value
+#             else:
+#                 return (
+#                     template_str[: match.start()]
+#                     + config_variable_value
+#                     + template_str[match.end() :]
+#                 )
+
+
+#     # if len(substitution_candidates) > 0:
+
+
+#         # For loop to iterate through tuple of matches
+#         outer_matches = match.groups()
+#         # for idx, match in enumerate(outer_matches):
+#         #     start = match.start(idx + 1)
+#         #     end = match.end(idx + 1)
+
+
+#         for outer_config_match in outer_matches:
+
+#             config_variable_value = config_variables_dict.get(outer_config_match)
+
+#             try:
+#                 inner_match = re.search(r"\$\{(.*?)\}", config_variable_value) or re.search(
+#                     r"\$([_a-zA-Z][_a-zA-Z0-9]*)", config_variable_value
+#                 )
+#             except TypeError:
+#                 inner_match = None
+
+#             # For
+
+#         if inner_match:
+#             config_variable_value = os.getenv(inner_match.group(1))
+
+#         if config_variable_value is not None:
+#             if match.start() == 0 and match.end() == len(template_str):
+#                 return config_variable_value
+#             else:
+#                 return (
+#                     template_str[: match.start()]
+#                     + config_variable_value
+#                     + template_str[match.end() :]
+#                 )
+
+#         raise MissingConfigVariableError(
+#             f"""\n\nUnable to find a match for config substitution variable: `{match.group(1)}`.
+# Please add this missing variable to your `uncommitted/config_variables.yml` file or your environment variables.
+# See https://great-expectations.readthedocs.io/en/latest/reference/data_context_reference.html#managing-environment-and-secrets""",
+#             missing_config_variable=match.group(1),
+#         )
 
     return template_str
 

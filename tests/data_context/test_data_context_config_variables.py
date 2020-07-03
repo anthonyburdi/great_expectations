@@ -12,6 +12,7 @@ from great_expectations.data_context.util import (
     file_relative_path,
     substitute_all_config_variables,
     substitute_config_variable,
+    find_substitution_candidates,
 )
 from great_expectations.exceptions import InvalidConfigError, MissingConfigVariableError
 from tests.data_context.conftest import create_data_context_files
@@ -192,6 +193,106 @@ def test_runtime_environment_are_used_preferentially(tmp_path_factory):
         del os.environ["replace_me"]
 
 
+def test_find_substitution_candidates():
+    """
+    Test that find_substitution_candidates() handles all types of single
+    line substitutions.
+    """
+
+    # TODO: less verbose test data, or put in fixture?
+    # Mild concern that this expansion should also be tested...
+
+    condensed_template_strings = {
+        "bigquery://$project/$dataset": [
+            ["$project", "project", 11, 19],
+            ["$dataset", "dataset", 20, 28]
+        ],
+        "bigquery://$PROJECT/$DATASET": [
+            ["$PROJECT", "PROJECT", 11, 19],
+            ["$DATASET", "DATASET", 20, 28]
+        ],
+    }
+
+    template_strings = []
+    for template_str, matches in condensed_template_strings.items():
+        candidate = {"template_str": template_str, "matches": []}
+        for substitutions in matches:
+            candidate['matches'].append(
+                {
+                    "match": substitutions[0],
+                    "clean_match": substitutions[1],
+                    "start": substitutions[2],
+                    "end": substitutions[3],
+                }
+            )
+        template_strings.append(candidate)
+
+    # Uncondensed examples:
+    # template_strings = [
+    #     {
+    #         "template_str": "bigquery://$project/$dataset",
+    #         "matches": [
+    #             {
+    #                 "match": "$project",
+    #                 "clean_match": "project",
+    #                 "start": 11,
+    #                 "end": 19,
+    #             },
+    #             {
+    #                 "match": "$dataset",
+    #                 "clean_match": "dataset",
+    #                 "start": 20,
+    #                 "end": 28,
+    #             }
+    #         ]
+    #     },
+    #     {
+    #         "template_str": "bigquery://$PROJECT/$DATASET",
+    #         "matches": [
+    #             {
+    #                 "match": "$PROJECT",
+    #                 "clean_match": "PROJECT",
+    #                 "start": 11,
+    #                 "end": 19,
+    #             },
+    #             {
+    #                 "match": "$DATASET",
+    #                 "clean_match": "DATASET",
+    #                 "start": 20,
+    #                 "end": 28,
+    #             }
+    #         ]
+    #     }
+    # ]
+
+    # TODO: Test these and others from notes:
+    # template_strs = [
+    #     "bigquery://$project/$dataset",
+    #     "bigquery://$PROJECT/$dataset",
+    #     "bigquery://$project/$DATASET",
+    #     "bigquery://$PROJECT/$DATASET",
+    #     "bigquery://$PROJECT/$DATASET/$project/$dataset/${PROJECT}/${DATASET}/${project}/${dataset}",
+    #     "bigquery://$PROJECT/$DATASET/$proJEct/$dataset/${PRojECT}/${DATaSeT}/${pRojEct}/${dataset}",
+    #     "bigquery://${project}/${dataset}",
+    #     "bigquery://${PROJECT}/${dataset}",
+    #     "bigquery://${project}/${DATASET}",
+    #     "bigquery://${PROJECT}/${DATASET}",
+    #     "bigquery://${PROJECT}/${DATASET}/${project}/${dataset}/$PROJECT/$DATASET/$project/$dataset",
+    #     "bigquery://${PROJECT}/${dATaSeT}/${pRoJEct}/${daTaset}/$PRojECT/$DaTaSET/$prOJect/$dAtasEt",
+
+    #     "bigquery://${_PR__E3T}/${dA3423aSeT}/${pR453_t}/${daT_et}/$_PRojECT/$DaTaSET/$pr09ect/$dAtasEt",
+
+    # ]
+
+    for template_string in template_strings:
+        assert (
+            template_string['matches'] ==
+            find_substitution_candidates(template_string['template_str'])
+        )
+
+
+
+
 def test_substitute_config_variable():
     config_variables_dict = {"arg0": "val_of_arg_0", "arg2": {"v1": 2}}
     assert (
@@ -211,28 +312,36 @@ def test_substitute_config_variable():
             "abc${arg1} def${foo}", config_variables_dict
         )  # does NOT equal "abc${arg1}"
     assert (
-        """Unable to find a match for config substitution variable: `arg1`.
-Please add this missing variable to your `uncommitted/config_variables.yml` file or your environment variables.
-See https://great-expectations.readthedocs.io/en/latest/reference/data_context_reference.html#managing-environment-and-secrets"""
+        """\n\nUnable to find a match for config substitution variable: `arg1`.
+    Please add this missing variable to your `uncommitted/config_variables.yml` file or your environment variables.
+    See https://great-expectations.readthedocs.io/en/latest/reference/data_context_reference.html#managing-environment-and-secrets"""
         in exc.value.message
     )
     assert (
         substitute_config_variable("${arg2}", config_variables_dict)
         == config_variables_dict["arg2"]
     )
-    assert exc.value.missing_config_variable == "arg1"
+#     assert exc.value.missing_config_variable == "arg1"
 
 
 def test_substitute_env_var_in_config_variable_file(monkeypatch):
-    monkeypatch.setenv("FOO", "val_of_arg_0")
-    config_variables_dict = {"arg0": "${FOO}", "arg2": {"v1": 2}, "replace_me": "wrong"}
-    assert (
-        substitute_config_variable("abc${arg0}", config_variables_dict)
-        == "abcval_of_arg_0"
-    )
-    monkeypatch.delenv("FOO")
-    with pytest.raises(MissingConfigVariableError):
-        substitute_config_variable("abc${arg0}", config_variables_dict)
+    # monkeypatch.setenv("FOO", "val_of_arg_0")
+    # monkeypatch.setenv("bar", "val_of_ARG_3")
+    config_variables_dict = {"arg0": "${FOO}", "arg2": {"v1": 2}, "replace_me": "wrong", "ARG3": "${bar}"}
+    # assert (
+    #     substitute_config_variable("abc${arg0}def", config_variables_dict)
+    #     == "abcval_of_arg_0def"
+    # )
+    # assert (
+    #     substitute_config_variable("abc${ARG3}def", config_variables_dict)
+    #     == "abcval_of_ARG_3def"
+    # )
+    # monkeypatch.delenv("FOO")
+    # monkeypatch.delenv("bar")
+    # with pytest.raises(MissingConfigVariableError):
+    #     substitute_config_variable("abc${arg0}def", config_variables_dict)
+    # with pytest.raises(MissingConfigVariableError):
+    #     substitute_config_variable("abc${ARG3}def", config_variables_dict)
 
     with open(
         file_relative_path(
@@ -242,6 +351,17 @@ def test_substitute_env_var_in_config_variable_file(monkeypatch):
         config = yaml.load(f)
 
     monkeypatch.setenv("replace_me", "correct")
+    monkeypatch.setenv("replace_me1", "correct_lower1")
+    monkeypatch.setenv("replace_me2", "correct_lower2")
+    monkeypatch.setenv("REPLACE_ME3", "correct_upper3")
+    monkeypatch.setenv("REPLACE_ME4", "correct_upper4")
+
+    # this is how dict is created in data_context.get_config_with_variables_substituted, for env var override
+    # config_variables_dict = {
+    #     **config_variables_dict,
+    #     # TODO: Why adding environment variables back into config_variables_dict?
+    #     # **dict(os.environ),
+    # }
 
     # this is how dict is created in data_context.get_config_with_variables_substituted, for env var override
     config_variables_dict = {
@@ -249,11 +369,33 @@ def test_substitute_env_var_in_config_variable_file(monkeypatch):
         **dict(os.environ),
     }
 
+
+    import pdb; pdb.set_trace()
+
     config = substitute_all_config_variables(config, config_variables_dict)
+
 
     assert (
         config["datasources"]["mydatasource"]["batch_kwargs_generators"]["mygenerator"][
             "reader_options"
         ]["test_variable_sub1"]
-        == "correct"
+        == "correct_lower1"
+    )
+    assert (
+        config["datasources"]["mydatasource"]["batch_kwargs_generators"]["mygenerator"][
+            "reader_options"
+        ]["test_variable_sub2"]
+        == "correct_lower2"
+    )
+    assert (
+        config["datasources"]["mydatasource"]["batch_kwargs_generators"]["mygenerator"][
+            "reader_options"
+        ]["test_variable_sub3"]
+        == "correct_upper3"
+    )
+    assert (
+        config["datasources"]["mydatasource"]["batch_kwargs_generators"]["mygenerator"][
+            "reader_options"
+        ]["test_variable_sub4"]
+        == "correct_upper4"
     )
