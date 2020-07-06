@@ -321,7 +321,7 @@ def test_substitute_config_variable():
         substitute_config_variable("${arg2}", config_variables_dict)
         == config_variables_dict["arg2"]
     )
-#     assert exc.value.missing_config_variable == "arg1"
+    assert exc.value.missing_config_variable == "arg1"
 
 
 def test_substitute_env_var_in_config_variable_file(monkeypatch):
@@ -370,7 +370,6 @@ def test_substitute_env_var_in_config_variable_file(monkeypatch):
     }
 
 
-    import pdb; pdb.set_trace()
 
     config = substitute_all_config_variables(config, config_variables_dict)
 
